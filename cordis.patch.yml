@@ -1,0 +1,9 @@
+plugins:
+  - id: av-identity
+    name: '@agentvalet/dsh'
+    config:
+      plugin: identity
+  - id: av-tools
+    name: '@agentvalet/dsh'
+    config:
+      plugin: tools
