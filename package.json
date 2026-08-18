@@ -14,7 +14,7 @@
   "dsh": { "bundle": { "patch": "cordis.patch.yml" }, "harness": ">=0.1.0-rc.5 <0.2.0" },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --project tsconfig.test.json",
     "test": "vitest run",
     "prepublishOnly": "node scripts/no-secrets.mjs && npm run build"
   },
