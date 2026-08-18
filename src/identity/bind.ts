@@ -39,7 +39,17 @@ export async function bindAgent(opts: BindOptions): Promise<BoundIdentity> {
     throw new BindError(`AgentValet rejected the enrolment (HTTP ${res.status}).`)
   }
 
-  const body = (await res.json()) as { agent_id?: string; owner_id?: string }
+  // A 2xx is not a promise of JSON: a captive portal or an intermediary can
+  // return HTML with status 200, and a raw SyntaxError here would surface as an
+  // unhandled crash instead of an actionable bind failure.
+  let body: { agent_id?: string; owner_id?: string }
+  try {
+    body = (await res.json()) as { agent_id?: string; owner_id?: string }
+  } catch {
+    throw new BindError(
+      'AgentValet returned a response that was not JSON. Check that the proxy URL points at AgentValet and that no captive portal or proxy is intercepting the request.',
+    )
+  }
   if (!body.agent_id || !body.owner_id) {
     throw new BindError('AgentValet returned an incomplete enrolment response.')
   }

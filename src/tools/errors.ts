@@ -39,7 +39,11 @@ export function toToolFailure(err: unknown): string {
     return `The approval request expired before the owner answered. The action did not happen. Ask the user whether to request it again.`
   }
   if (err instanceof ApprovalTimeoutError) {
-    return `The owner has not yet answered the approval request; it is still waiting. The action has not been performed. Do not retry immediately.`
+    // NOT a failure. The action is still queued server-side and WILL run if the
+    // owner approves. Telling the model "the action has not been performed"
+    // invites a retry, and a retry after approval performs it twice — two Slack
+    // messages, two Stripe charges.
+    return `We stopped waiting for the owner, but the approval request is still pending (approval ${err.approvalId}) and the original action will still run if they approve it. Do NOT retry: retrying risks performing this action twice. Tell the user it is awaiting approval and point them at https://app.agentvalet.ai to approve or decline it.`
   }
   if (err instanceof NetworkError) {
     return `Could not reach AgentValet, so the call has not been made. Nothing was sent to the platform. Check connectivity and try again.`
@@ -53,5 +57,21 @@ export function toToolFailure(err: unknown): string {
   if (err instanceof ConfigError) {
     return `AgentValet is not configured for this profile. Connect this dsh profile to AgentValet with a bootstrap token from https://app.agentvalet.ai/settings.`
   }
-  return 'The call failed for an unexpected reason and did not complete.'
+  return 'The call failed for an unexpected reason and did not complete. Nothing was sent to the platform. Tell the user rather than retrying.'
+}
+
+/**
+ * The approval this failure belongs to, when there is one, so the caller can be
+ * resumed with `client.waitForApproval(approvalId)` instead of re-issuing the
+ * action.
+ */
+export function approvalIdOf(err: unknown): string | undefined {
+  if (
+    err instanceof ApprovalTimeoutError ||
+    err instanceof ApprovalDeniedError ||
+    err instanceof ApprovalExpiredError
+  ) {
+    return err.approvalId
+  }
+  return undefined
 }

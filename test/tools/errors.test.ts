@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { AccessDeniedError, ApprovalDeniedError, ApprovalTimeoutError, NetworkError, ProxyError } from '@agentvalet/client'
-import { toToolFailure } from '../../src/tools/errors.js'
+import { AccessDeniedError, ApprovalDeniedError, ApprovalExpiredError, ApprovalTimeoutError, NetworkError, ProxyError } from '@agentvalet/client'
+import { approvalIdOf, toToolFailure } from '../../src/tools/errors.js'
 
 describe('toToolFailure', () => {
   it('turns a denial into an instruction, not a status code', () => {
@@ -20,10 +20,32 @@ describe('toToolFailure', () => {
     expect(msg).toMatch(/do not retry/i)
   })
 
-  it('distinguishes a timeout, which may be resumed, from a denial', () => {
+  it('says a timed-out approval is still pending and that a retry could double the action', () => {
+    // The SDK documents ApprovalTimeoutError as "still queued server-side and
+    // will run if the owner approves. NOT a failure." Saying "the action has
+    // not been performed" invites a retry that sends the Slack message twice.
     const msg = toToolFailure(new ApprovalTimeoutError('approval-id', 5000))
-    expect(msg).toMatch(/still waiting|not yet/i)
+    expect(msg).toMatch(/still pending|still run/i)
+    expect(msg).toMatch(/twice/i)
+    expect(msg).toMatch(/do not retry/i)
+    expect(msg).toMatch(/app\.agentvalet\.ai/)
+    expect(msg).toContain('approval-id')
+    expect(msg).not.toMatch(/has not been performed/i)
     expect(msg).not.toMatch(/declined/i)
+  })
+
+  it('surfaces the approval id so the call can be resumed rather than repeated', () => {
+    expect(approvalIdOf(new ApprovalTimeoutError('ap_1', 5000))).toBe('ap_1')
+    expect(approvalIdOf(new ApprovalDeniedError('ap_2', 'no'))).toBe('ap_2')
+    expect(approvalIdOf(new ApprovalExpiredError('ap_3'))).toBe('ap_3')
+    expect(approvalIdOf(new NetworkError('offline', new Error('x')))).toBeUndefined()
+    expect(approvalIdOf(new Error('plain'))).toBeUndefined()
+  })
+
+  it('tells the model nothing was sent when the failure is unrecognised', () => {
+    const msg = toToolFailure(new Error('something nobody mapped'))
+    expect(msg).toMatch(/Nothing was sent to the platform/i)
+    expect(msg).toMatch(/Tell the user rather than retrying/i)
   })
 
   it('fails closed and says so when the broker is unreachable', () => {

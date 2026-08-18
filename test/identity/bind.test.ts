@@ -39,4 +39,17 @@ describe('bindAgent', () => {
       fetch: (async () => new Response('{}', { status: 429 })) as any,
     })).rejects.toThrow(/too many/i)
   })
+
+  it('raises BindError, not a raw SyntaxError, on a non-JSON 2xx', async () => {
+    // A captive portal or intercepting proxy answering 200 with HTML.
+    const html = async () => new Response('<html>Sign in to the network</html>', {
+      status: 200, headers: { 'content-type': 'text/html' },
+    })
+    const call = bindAgent({
+      bootstrapToken: 'tok', publicKeyPem: 'pub', proxyUrl: 'https://p.example',
+      fetch: html as any,
+    })
+    await expect(call).rejects.toBeInstanceOf(BindError)
+    await expect(call).rejects.toThrow(/not JSON/i)
+  })
 })

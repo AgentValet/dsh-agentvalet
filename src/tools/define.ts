@@ -1,9 +1,13 @@
 import { defineTool, type JsonValue, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { AgentValetService } from '../identity/index.js'
-import { toToolFailure } from './errors.js'
+import { approvalIdOf, toToolFailure } from './errors.js'
 
 /** The value every tool's `execute` resolves to. */
-type ToolOutcome = { ok: true; data: JsonValue } | { ok: false; error: string }
+type ToolOutcome =
+  | { ok: true; data: JsonValue }
+  // `approvalId` is present when the failure belongs to an approval that can be
+  // resumed rather than re-issued.
+  | { ok: false; error: string; approvalId?: string }
 
 /**
  * Every tool returns this shape rather than throwing: `{ ok: true, data }` on
@@ -51,7 +55,8 @@ export function buildTools(svc: AgentValetService): ToolDefinition[] {
     try {
       return { ok: true, data: (await fn()) as JsonValue }
     } catch (err) {
-      return { ok: false, error: toToolFailure(err) }
+      const approvalId = approvalIdOf(err)
+      return { ok: false, error: toToolFailure(err), ...(approvalId ? { approvalId } : {}) }
     }
   }
 
@@ -82,6 +87,10 @@ export function buildTools(svc: AgentValetService): ToolDefinition[] {
         ...target,
         method: {
           type: 'string' as const,
+          // Declared as an enum so dsh-tools' own `validateArgs` rejects
+          // anything else before `execute` runs, and the model reads the
+          // restriction off the schema instead of discovering it by failing.
+          enum: ['POST', 'PUT', 'PATCH'] as const,
           description: 'POST (default), PUT or PATCH.',
         },
         data: {
@@ -91,7 +100,10 @@ export function buildTools(svc: AgentValetService): ToolDefinition[] {
       },
       output: RESULT,
       execute: async (args): Promise<ToolOutcome> => {
-        const method = (args.method ?? 'POST').toUpperCase()
+        // Belt and braces: the schema enum already rejects anything else
+        // upstream, but a caller that bypasses validateArgs must not slip a
+        // DELETE through the write tool.
+        const method = String(args.method ?? 'POST').toUpperCase()
         if (method !== 'POST' && method !== 'PUT' && method !== 'PATCH') {
           return {
             ok: false,
@@ -99,9 +111,7 @@ export function buildTools(svc: AgentValetService): ToolDefinition[] {
               'write_platform accepts only POST, PUT or PATCH. Use agentvalet_read_platform to read and agentvalet_delete_platform to delete.',
           }
         }
-        return run(() =>
-          svc.client().call({ ...args, method: method as 'POST' | 'PUT' | 'PATCH' }),
-        )
+        return run(() => svc.client().call({ ...args, method }))
       },
     }),
 
