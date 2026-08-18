@@ -41,4 +41,18 @@ describe('agentvalet service', () => {
     expect(reloaded.enrolled).toBe(true)
     expect(reloaded.client().agentId).toBe('agt_x')
   })
+
+  it('refuses to replace an existing identity and does not clobber the store', async () => {
+    const store = createFileCredentialStore(home())
+    const fetchOk = (async () => new Response(
+      JSON.stringify({ agent_id: 'agt_x', owner_id: 'own_y' }), { status: 200 },
+    )) as any
+    const svc = await createAgentValetService({
+      profile: 'web', proxyUrl: 'https://p.example', store, fetch: fetchOk,
+    })
+    await svc.enrol('tok')
+
+    await expect(svc.enrol('tok2')).rejects.toThrow(/already connected/i)
+    expect(svc.client().agentId).toBe('agt_x')
+  })
 })
