@@ -9,3 +9,6 @@ lib/
 *.key
 agentvalet/
 .superpowers/
+
+# Local-only literals for scripts/no-secrets.mjs (never committed).
+.no-secrets-denylist

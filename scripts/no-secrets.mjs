@@ -4,23 +4,18 @@
 // Publish tripwire. Refuses to ship a package whose tarball contains ANY
 // sensitive material — credentials, identity, internal infrastructure.
 //
-// Why this exists (near-miss 2026-08-12): `agentvalet-register refresh` seeds
-// every directory it takes for a project, including packages/agents-md, whose
-// .md files are PRODUCT TEMPLATES that package publishes. It appended the agent
-// id, owner id, and the full approved platform/scope inventory to them. HEAD
-// stayed clean so `git status` showed three unremarkable " M" lines. Publishing
-// there would have been permanent: npm versions cannot be unpublished after 72h
-// and can never be reused afterwards.
+// It exists because tooling can append an agent identity block to a file that
+// is about to be published, and an npm version cannot be unpublished after 72h.
 //
 // Two independent layers, because either alone has a blind spot:
 //
 //   1. PATTERNS — known shapes (key material, vendor token formats, identity,
 //      connection strings, internal hosts). Catches secrets this repo has never
 //      seen, but only ones whose shape was anticipated.
-//   2. ENV CROSS-CHECK — every value in the repo-root .env is searched for
-//      verbatim in the shipping files. Catches ANY real secret regardless of
-//      format, including ones no pattern would match. This is the stronger of
-//      the two and the reason a bespoke script beats a generic scanner here.
+//   2. VALUE CROSS-CHECK — every value in the repo-root .env, plus any literal
+//      supplied through the local denylist below, is searched for verbatim in
+//      the shipping files. Catches ANY real secret regardless of format,
+//      including ones no pattern would match.
 //
 // Scans exactly what `npm pack` would ship, so the `files` allowlist and
 // .npmignore are honoured and the guard does not cry wolf over local-only
@@ -31,15 +26,12 @@
 // Run from a package directory. Exit 0 = clean, 1 = something sensitive found.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
+// This repo is standalone: package.json and any .env live in the directory the
+// script runs from.
 const ROOT = process.cwd();
-// Adapted for standalone repo use: in its originating monorepo
-// this script ran from a package two levels below the repo root (e.g.
-// packages/client), so REPO_ROOT was resolve(ROOT, "../..") to find the
-// workspace-root .env. This repo is standalone — package.json and any .env
-// live at the same directory this script runs from — so REPO_ROOT is ROOT.
 const REPO_ROOT = ROOT;
 
 // ── Layer 1: shape-based patterns ────────────────────────────────────────────
@@ -47,15 +39,14 @@ const REPO_ROOT = ROOT;
 // finds documentation, matching an actual credential finds a leak.
 const PATTERNS = [
   // — AgentValet identity / internal posture —
-  // Excludes documented placeholders — smithery.yaml ships
-  // `agt_example000000000000` as user-config help text. A real id is random base36.
+  // Excludes documented placeholders. A real id is random base36.
   { re: /\bagt_(?!example|your|test|placeholder|xxxx)[a-z0-9]{16,}\b/i, what: "AgentValet agent id" },
   { re: /\bOwner ID:\s*`?[0-9a-f]{8}-[0-9a-f]{4}-/i, what: "owner id" },
   { re: /^#+\s*AgentValet Permissions\s*$/im, what: "injected permissions block" },
   { re: /Last refreshed:\s*\d{4}-\d{2}-\d{2}T/i, what: "register-refresh timestamp" },
 
   // — key material — requires a real base64 body; a bare PEM header is
-  //   legitimate in key-validation code (pem.ts, env.ts, env.py all have one).
+  //   legitimate in key-validation and key-generation code.
   { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\r\n]+[A-Za-z0-9+/=\s]{100,}/, what: "private key material" },
   { re: /-----BEGIN OPENSSH PRIVATE KEY-----[\r\n]+[A-Za-z0-9+/=\s]{100,}/, what: "SSH private key" },
 
@@ -66,8 +57,8 @@ const PATTERNS = [
   { re: /\b(ghp|gho|ghu|ghs)_[A-Za-z0-9]{36}\b/, what: "GitHub token" },
   { re: /\bgithub_pat_[A-Za-z0-9_]{20,}/, what: "GitHub fine-grained PAT" },
   // Real shape is xoxb-<digits>-<digits>-<random>. Matching the looser
-  // `xox?-anything` fires on the deliberate `xoxb-real-token-here` placeholder
-  // in agents-md's "don't do this" example — teaching material, not a secret.
+  // `xox?-anything` fires on deliberate "don't do this" placeholders in
+  // teaching material.
   { re: /\bxox[baprs]-\d{9,}-\d{9,}-[A-Za-z0-9]{20,}/, what: "Slack token" },
   { re: /\bAKIA[0-9A-Z]{16}\b/, what: "AWS access key id" },
   { re: /\bsb_secret_[A-Za-z0-9_-]{20,}/, what: "Supabase secret key" },
@@ -80,10 +71,18 @@ const PATTERNS = [
   { re: /\b(postgres(ql)?|mysql|mongodb(\+srv)?|redis|amqp):\/\/[^\s:@/]+:[^\s:@/]+@/i, what: "connection string with password" },
 
   // — internal infrastructure —
+  // Generic shapes only. This file is published with the repo, so a specific
+  // hostname, IP, or project ref belongs in the local denylist below — writing
+  // one here would BE the leak the guard exists to prevent.
   { re: /\bhttps?:\/\/[a-z0-9]{20}\.supabase\.co/i, what: "Supabase project URL" },
-  { re: /\bmcp-[a-z0-9]{20}-supabase-co\b/i, what: "internal Supabase project ref" },
-  { re: /\b45\.63\.27\.179\b/, what: "production VM IP" },
   { re: /\bvault\.azure\.net\b/i, what: "Azure Key Vault hostname" },
+  // A bare public IPv4 literal in shipping text is almost always an origin
+  // server nobody meant to publish. Private, loopback, link-local and the
+  // RFC 5737 documentation ranges are excluded.
+  {
+    re: /\b(?!127\.|0\.|10\.|192\.168\.|169\.254\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|255\.)(?:\d{1,3}\.){3}\d{1,3}\b/,
+    what: "bare public IPv4 address",
+  },
 
   // — generic assignment of a long opaque value to a secret-ish name —
   {
@@ -92,24 +91,41 @@ const PATTERNS = [
   },
 ];
 
+// ── local denylist: literals too specific to commit ──────────────────────────
+// This script ships in a public repo, so a production hostname or project ref
+// written into it IS the leak it is meant to prevent. Supply those out of band:
+//
+//   NO_SECRETS_DENYLIST="origin.example,<your-origin-ip>"  (comma-separated), or
+//   a gitignored .no-secrets-denylist file, one literal per line (# comments).
+//
+// With neither present the generic patterns above still run.
+function localDenylist() {
+  const out = [];
+  const push = (raw) => {
+    const value = raw.trim();
+    if (value && !value.startsWith("#")) out.push(value);
+  };
+  for (const value of (process.env.NO_SECRETS_DENYLIST ?? "").split(",")) push(value);
+  const file = join(REPO_ROOT, ".no-secrets-denylist");
+  if (existsSync(file)) for (const line of readFileSync(file, "utf8").split(/\r?\n/)) push(line);
+  return out;
+}
+
 // Values this short, or this common, would produce noise rather than signal.
 const MIN_ENV_VALUE_LEN = 12;
 const ENV_VALUE_DENYLIST = new Set(["true", "false", "localhost", "development", "production"]);
 
 // ── what would actually ship ─────────────────────────────────────────────────
-// Two ecosystems publish out of this repo, so the guard has to understand both.
-// Before this, a package directory without a package.json made `npm pack` fail
-// and the script exited 1 — which reads as "blocked" but meant the Python
-// packages were never actually scanned by anything.
-
-// npm: ask the packer, so `files` and .npmignore are honoured exactly.
+// Ask the packer, so `files` and .npmignore are honoured exactly.
 //
-// maxBuffer is raised well above the default 1 MB. Run from the repo root by
-// mistake and `npm pack` tries to enumerate the whole workspace; the JSON blows
-// the default buffer and spawnSync dies with a bare ENOBUFS, which reads as
-// "the guard is broken" rather than "you are in the wrong directory". A
-// security tool people distrust is a security tool people skip.
-function npmPackList() {
+// maxBuffer is raised well above the default 1 MB: a large pack list blows the
+// default and spawnSync dies with a bare ENOBUFS, which reads as "the guard is
+// broken" rather than "something went wrong here". A security tool people
+// distrust is a security tool people skip.
+function filesThatWouldShip() {
+  if (!existsSync(join(ROOT, "package.json"))) {
+    throw new Error("no package.json — not a publishable package directory");
+  }
   const out = execFileSync("npm", ["pack", "--dry-run", "--json"], {
     cwd: ROOT,
     encoding: "utf8",
@@ -118,55 +134,6 @@ function npmPackList() {
     maxBuffer: 64 * 1024 * 1024,
   });
   return (JSON.parse(out)[0]?.files ?? []).map((f) => f.path);
-}
-
-// Python: there is no equivalent dry-run that works without `build` installed,
-// and shelling out to a build would make the tripwire depend on the very
-// toolchain it is guarding. Walk the tree instead, skipping only generated and
-// vendored directories. Deliberately OVER-inclusive: the failure mode to avoid
-// is scanning too little, and a false positive on a local-only file costs one
-// look while a missed secret is permanent.
-const PY_SKIP_DIRS = new Set([
-  "dist",
-  "build",
-  ".venv",
-  "venv",
-  ".tox",
-  ".git",
-  ".mypy_cache",
-  ".pytest_cache",
-  ".ruff_cache",
-  "__pycache__",
-  "node_modules",
-]);
-
-function pythonShipList(dir = ROOT, prefix = "") {
-  const out = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) {
-      if (PY_SKIP_DIRS.has(entry.name) || entry.name.endsWith(".egg-info")) continue;
-      out.push(...pythonShipList(join(dir, entry.name), rel));
-    } else if (entry.isFile()) {
-      out.push(rel);
-    }
-  }
-  return out;
-}
-
-function filesThatWouldShip() {
-  // The repo root has a package.json too, so without this the guard would try to
-  // pack the entire workspace and report an unrelated failure. It is never the
-  // thing being published; say so plainly instead.
-  if (existsSync(join(ROOT, "pnpm-workspace.yaml"))) {
-    throw new Error(
-      "this is the repo root, not a package. cd into the package you are publishing " +
-        "(e.g. packages/client) and run it there.",
-    );
-  }
-  if (existsSync(join(ROOT, "package.json"))) return npmPackList();
-  if (existsSync(join(ROOT, "pyproject.toml"))) return pythonShipList();
-  throw new Error("no package.json and no pyproject.toml — not a publishable package directory");
 }
 
 // ── Layer 2: real values from .env ───────────────────────────────────────────
@@ -195,8 +162,9 @@ try {
   process.exit(1);
 }
 
-const SCAN_EXT = /\.(md|json|js|mjs|cjs|ts|tsx|map|yaml|yml|txt|py|toml|sh|html|css)$/i;
+const SCAN_EXT = /\.(md|json|js|mjs|cjs|ts|tsx|map|yaml|yml|txt|toml|sh|html|css)$/i;
 const secrets = envSecrets();
+const denied = localDenylist();
 const hits = [];
 
 for (const rel of shipping.filter((f) => SCAN_EXT.test(f))) {
@@ -213,17 +181,14 @@ for (const rel of shipping.filter((f) => SCAN_EXT.test(f))) {
   for (const { name, value } of secrets) {
     if (text.includes(value)) hits.push({ file: rel, what: `literal value of ${name} from .env` });
   }
+  for (const value of denied) {
+    if (text.includes(value)) hits.push({ file: rel, what: "literal from the local denylist" });
+  }
 }
 
 const pkgName = (() => {
   try {
     return JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).name;
-  } catch {
-    /* not an npm package — try pyproject */
-  }
-  try {
-    const toml = readFileSync(join(ROOT, "pyproject.toml"), "utf8");
-    return toml.match(/^\s*name\s*=\s*["']([^"']+)["']/m)?.[1] ?? ROOT;
   } catch {
     return ROOT;
   }
@@ -232,7 +197,8 @@ const pkgName = (() => {
 if (hits.length === 0) {
   console.log(
     `[no-secrets] ok — ${pkgName}: ${shipping.length} shipping files, ` +
-      `${PATTERNS.length} patterns, ${secrets.length} .env values cross-checked`,
+      `${PATTERNS.length} patterns, ${secrets.length} .env values and ` +
+      `${denied.length} denylist literals cross-checked`,
   );
   process.exit(0);
 }
@@ -241,10 +207,7 @@ console.error(`\n[no-secrets] REFUSING TO PUBLISH ${pkgName}\n`);
 for (const h of hits) console.error(`  ${h.file}  —  ${h.what}`);
 console.error(
   "\nSomething sensitive is inside the tarball this publish would upload.\n" +
-    "If it is the AgentValet identity block, that is `agentvalet-register refresh`\n" +
-    "seeding a package directory it mistook for a project: restore with\n" +
-    "`git checkout -- <package>` and delete any injected .claude/ and .mcp.json.\n" +
-    "Do NOT publish past this. npm versions cannot be unpublished after 72h and\n" +
-    "can never be reused afterwards; assume anything uploaded is permanent.\n",
+    "Do NOT publish past this. An npm version cannot be unpublished after 72h\n" +
+    "and can never be reused afterwards; assume anything uploaded is permanent.\n",
 );
 process.exit(1);
