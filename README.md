@@ -22,12 +22,29 @@ connected" rather than failing obscurely. To connect it:
 
 1. In the AgentValet dashboard, generate a single-use bootstrap token for a
    new agent.
-2. Run the plugin's connect step in the profile and paste the token in.
+2. Run the bundle's connect command:
 
-The plugin generates an RS256 keypair locally and sends only the **public**
+```bash
+AGENTVALET_BOOTSTRAP_TOKEN=<token> npx agentvalet-dsh-connect --profile web
+```
+
+`--token <token>` works too; the environment variable just keeps the token out
+of your shell history. The command prints the new agent id and nothing else —
+never the token, never the key. `--help` lists the rest of the flags.
+
+Connecting is a **command you run**, not a tool the agent can call. An
+enrolment tool would let an agent bootstrap its own identity with no human in
+the loop, and the identity would stop attesting to a person's decision to
+create it.
+
+The command generates an RS256 keypair locally and sends only the **public**
 key to AgentValet's `/v1/agents/bind` endpoint. The private key never leaves
-the machine. Once bound, the agent shows up in the dashboard **deny-by-default**
-— it can call nothing until the owner grants it specific platforms and scopes.
+the machine. It is written to `$DSH_HOME/agentvalet/<profile>.json`
+(`~/.dsh/agentvalet/...` when `DSH_HOME` is unset) at mode `0600`, and the
+store refuses outright to write anywhere inside a git working tree.
+
+Once bound, the agent shows up in the dashboard **deny-by-default** — it can
+call nothing until the owner grants it specific platforms and scopes.
 
 A bootstrap token is single-use. Re-running connect on an already-connected
 profile is refused rather than silently replacing the identity, so one
@@ -46,7 +63,10 @@ Every tool takes the `platform` id and `scope` string exactly as returned by
 `agentvalet_list_platforms`, plus an `endpoint`. All four resolve to
 `{ ok: true, data }` on success or `{ ok: false, error }` on failure — a
 denial, a pending approval, or a suspended agent all come back as a plain
-result the model can read and explain, never as a thrown error.
+result the model can read and explain rather than as a thrown error. (That is
+a guarantee about our own tool bodies. Argument validation happens in the
+harness before our code runs, so a malformed call comes back in dsh's own
+`isError` result shape instead.)
 
 ## What this does NOT do
 
@@ -58,9 +78,9 @@ result the model can read and explain, never as a thrown error.
 - **No sandboxing.** This plugin governs *which platform calls succeed*; it
   is not a substitute for running the harness in a sandbox and pairs with
   one rather than replacing it.
-- **No delegation or scope-attenuation guarantee.** This bundle enforces the
-  owner's grants for this one agent. It makes no claim about sub-agent
-  containment or attenuated re-delegation of scopes.
+- **No sub-agent delegation and no attenuated scope re-issue.** This bundle
+  implements neither. It enforces the owner's grants for this one agent, and
+  that is all it does.
 
 ## Compatibility
 

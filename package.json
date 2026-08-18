@@ -10,7 +10,8 @@
     ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
     "./package.json": "./package.json"
   },
-  "files": ["lib/**/*.js", "lib/types/**/*.d.ts", "cordis.patch.yml", "AGENTS.md"],
+  "bin": { "agentvalet-dsh-connect": "./bin/connect.mjs" },
+  "files": ["lib/**/*.js", "lib/types/**/*.d.ts", "bin/connect.mjs", "cordis.patch.yml", "AGENTS.md", "LICENSE"],
   "dsh": { "bundle": { "patch": "cordis.patch.yml" }, "harness": ">=0.1.0-rc.5 <0.2.0" },
   "scripts": {
     "build": "tsc",
