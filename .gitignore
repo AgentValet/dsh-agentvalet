@@ -1,3 +1,11 @@
 node_modules/
 lib/
 *.log
+
+# Never commit credentials or identity material.
+.env
+.env.*
+*.pem
+*.key
+agentvalet/
+.superpowers/

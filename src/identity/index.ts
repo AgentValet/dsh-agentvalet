@@ -1,4 +1,6 @@
-import { AgentValet } from '@agentvalet/client'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { AgentValet, ConfigError } from '@agentvalet/client'
 import type { Context } from '@deepseek-ai/cordis'
 import { generateAgentKeypair } from './keypair.js'
 import { bindAgent } from './bind.js'
@@ -11,6 +13,17 @@ export const name = 'av-identity'
 export const inject: string[] = []
 
 const DEFAULT_PROXY_URL = 'https://api.agentvalet.ai'
+
+/**
+ * Where the profile's signing key lives when nothing else says otherwise.
+ *
+ * NEVER `process.cwd()`. For an interactive dsh session the cwd is the user's
+ * project repository, so a default there puts an RS256 private key one
+ * `git add -A` away from being committed and pushed.
+ */
+export function defaultHomeDir(env: NodeJS.ProcessEnv = process.env): string {
+  return env.DSH_HOME ?? join(homedir(), '.dsh')
+}
 
 export interface AgentValetService {
   readonly enrolled: boolean
@@ -41,8 +54,11 @@ export async function createAgentValetService(opts: ServiceOptions): Promise<Age
 
     client() {
       if (!identity) {
-        throw new Error(
-          'This dsh profile is not connected to AgentValet. Run the AgentValet connect step with a bootstrap token from https://app.agentvalet.ai.',
+        // ConfigError, not a plain Error: `src/tools/errors.ts` maps the
+        // AgentValet error classes to the sentence the model sees, and a plain
+        // Error falls through to the useless generic fallback.
+        throw new ConfigError(
+          'This dsh profile is not connected to AgentValet. Run `agentvalet-dsh-connect` with a bootstrap token from https://app.agentvalet.ai.',
         )
       }
       return build(identity)
@@ -76,9 +92,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const service = await createAgentValetService({
     profile: config.profile ?? 'default',
     proxyUrl: config.proxyUrl ?? DEFAULT_PROXY_URL,
-    store: createFileCredentialStore(
-      config.homeDir ?? process.env.DSH_HOME ?? process.cwd(),
-    ),
+    store: createFileCredentialStore(config.homeDir ?? defaultHomeDir()),
   })
   // `ctx.set` only overwrites a service that is already provided in this
   // fiber; registering a brand-new service name requires `ctx.provide`
