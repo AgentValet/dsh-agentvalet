@@ -16,7 +16,18 @@ export function toToolFailure(err: unknown): string {
     // A suspension is almost always deliberate policy enforcement, not the
     // circuit breaker. Telling someone to wait for a breaker reset when their
     // owner suspended them on purpose is worse than saying nothing.
-    if (err.body === 'agent_suspended') {
+    // The proxy sends a JSON body with { reason: "agent_suspended" }, so parse it.
+    let isSuspended = false
+    try {
+      const parsed = JSON.parse(err.body)
+      isSuspended = parsed.reason === 'agent_suspended'
+    } catch {
+      // Body is not JSON (e.g., 502 from an intermediary returns HTML).
+      // Fall back to substring check for safety against shape changes.
+      isSuspended = err.body.includes('agent_suspended')
+    }
+
+    if (isSuspended) {
       return `This agent is suspended by its owner. Nothing was sent to the platform. The owner must lift the suspension at https://app.agentvalet.ai; do not retry until they do.`
     }
     return `AgentValet denied access to ${err.platform} with scope ${err.scope}. The owner has not granted this agent that platform and scope. Ask the user to grant it at https://app.agentvalet.ai, then try again.`

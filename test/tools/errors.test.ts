@@ -4,7 +4,12 @@ import { toToolFailure } from '../../src/tools/errors.js'
 
 describe('toToolFailure', () => {
   it('turns a denial into an instruction, not a status code', () => {
-    const msg = toToolFailure(new AccessDeniedError(403, 'not_granted', 'slack', 'chat:write'))
+    const denialBody = JSON.stringify({
+      error: 'Permission denied',
+      reason: 'no_grant',
+      correlation_id: 'c1',
+    })
+    const msg = toToolFailure(new AccessDeniedError(403, denialBody, 'slack', 'chat:write'))
     expect(msg).toMatch(/owner/i)
     expect(msg).not.toMatch(/^\d{3}$/)
   })
@@ -27,11 +32,39 @@ describe('toToolFailure', () => {
     expect(msg).toMatch(/not been made/i)
   })
 
-  it('reports a suspension without breaker advice', () => {
-    const msg = toToolFailure(new AccessDeniedError(403, 'agent_suspended', 'slack', 'chat:write'))
+  it('detects agent suspension from realistic JSON body shape', () => {
+    const suspensionBody = JSON.stringify({
+      error: 'Permission denied',
+      reason: 'agent_suspended',
+      correlation_id: 'c1',
+    })
+    const msg = toToolFailure(new AccessDeniedError(403, suspensionBody, 'slack', 'chat:write'))
     expect(msg).toMatch(/suspended/i)
     expect(msg).not.toMatch(/circuit breaker|wait.*reset/i)
     expect(msg).toMatch(/nothing was sent/i)
+  })
+
+  it('distinguishes suspension from ordinary denial by reason field', () => {
+    // Same JSON structure, different reason. This proves the detection is discriminating,
+    // not matching all AccessDeniedError cases.
+    const denialBody = JSON.stringify({
+      error: 'Permission denied',
+      reason: 'no_grant',
+      correlation_id: 'c1',
+    })
+    const msg = toToolFailure(new AccessDeniedError(403, denialBody, 'slack', 'chat:write'))
+    expect(msg).toMatch(/owner has not granted/i)
+    expect(msg).not.toMatch(/suspended/i)
+  })
+
+  it('handles non-JSON body without throwing', () => {
+    const htmlBody = '<html><body>502 Bad Gateway</body></html>'
+    const msg = toToolFailure(new AccessDeniedError(403, htmlBody, 'slack', 'chat:write'))
+    // Should return a string and not throw
+    expect(msg).toBeTypeOf('string')
+    expect(msg.length).toBeGreaterThan(0)
+    // Should fall back to substring check (no 'agent_suspended' in this body)
+    expect(msg).toMatch(/owner has not granted/i)
   })
 
   it('never leaks a raw stack to the model', () => {
