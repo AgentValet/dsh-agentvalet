@@ -1,12 +1,12 @@
-import { describe, it, expect } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { describe, it, expect, vi } from 'vitest'
+import { mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { ConfigError } from '@agentvalet/client'
 import { createAgentValetService, defaultHomeDir } from '../../src/identity/index.js'
 import { toToolFailure } from '../../src/tools/errors.js'
-import { createFileCredentialStore } from '../../src/identity/store.js'
+import { createFileCredentialStore, UnsafeStoreLocationError } from '../../src/identity/store.js'
 
 const home = () => mkdtempSync(join(tmpdir(), 'avdsh-'))
 
@@ -73,5 +73,26 @@ describe('agentvalet service', () => {
 
     await expect(svc.enrol('tok2')).rejects.toThrow(/already connected/i)
     expect(svc.client().agentId).toBe('agt_x')
+  })
+
+  it('refuses an unsafe store destination BEFORE spending the bootstrap token', async () => {
+    // A single-use token burns the moment bindAgent's request lands, so the
+    // unsafe-location check must run first: otherwise a user whose $HOME sits
+    // inside a git working tree loses the token and the generated key with
+    // nothing usable to show for it, and is left with an orphan agent bound
+    // server-side that they can never complete enrolling.
+    const dir = home()
+    mkdirSync(join(dir, '.git'))
+    const store = createFileCredentialStore(dir)
+    const fetchSpy = vi.fn(async () => new Response(
+      JSON.stringify({ agent_id: 'agt_testonlyfake000001', owner_id: 'own_testonly' }), { status: 200 },
+    ))
+    const svc = await createAgentValetService({
+      profile: 'web', proxyUrl: 'https://p.example', store, fetch: fetchSpy,
+    })
+
+    await expect(svc.enrol('bt_TESTONLY_abc123')).rejects.toBeInstanceOf(UnsafeStoreLocationError)
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(svc.enrolled).toBe(false)
   })
 })

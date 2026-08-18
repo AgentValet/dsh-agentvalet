@@ -37,7 +37,21 @@ export function parseConnectArgs(argv: readonly string[]): ConnectArgs {
     if (arg === '--help' || arg === '-h') return { help: true }
     const match = /^--([a-z]+)(?:=([\s\S]*))?$/.exec(arg)
     const flag = FLAGS.find((f) => f === match?.[1])
-    if (!flag) throw new Error(`Unrecognised argument: ${arg}`)
+    if (!flag) {
+      // Never echo the argument's value: a mistyped flag (e.g. --tokn=<the
+      // bootstrap token>) or a bare positional (the token pasted with no
+      // flag at all) would otherwise print a single-use credential straight
+      // to the terminal and into CI logs. Name only the flag portion (before
+      // the first "="), or, for a bare positional, name none of it.
+      if (arg.startsWith('--')) {
+        const eq = arg.indexOf('=')
+        const flagPart = eq === -1 ? arg : arg.slice(0, eq)
+        throw new Error(`Unrecognised argument: ${flagPart}`)
+      }
+      throw new Error(
+        'Unrecognised positional argument. Bootstrap tokens must be passed with --token, not bare on the command line.',
+      )
+    }
     const value = match?.[2] ?? argv[++i]
     if (value === undefined) throw new Error(`--${flag} needs a value.`)
     out[flag] = value

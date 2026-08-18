@@ -15,6 +15,16 @@ export interface StoredIdentity {
 export interface CredentialStore {
   load(profile: string): Promise<StoredIdentity | null>
   save(profile: string, identity: StoredIdentity): Promise<void>
+  /**
+   * Throws (e.g. `UnsafeStoreLocationError`) if the store cannot safely
+   * accept a `save` right now, without writing anything. Callers that spend
+   * a one-shot resource before saving (a single-use bootstrap token, most
+   * notably) should call this first, so an unusable destination fails before
+   * the resource is spent rather than after. `save` performs the same check
+   * again itself — the destination can change between the two calls, and the
+   * check inside `save` is the guarantee that actually protects the write.
+   */
+  assertWritable(profile: string): Promise<void>
 }
 
 /** Raised when the store refuses to write the private key where it is. */
@@ -61,7 +71,7 @@ export function createFileCredentialStore(homeDir: string): CredentialStore {
         throw err
       }
     },
-    async save(profile, identity) {
+    async assertWritable() {
       const gitRoot = await findGitRoot(dir)
       if (gitRoot !== null) {
         throw new UnsafeStoreLocationError(
@@ -69,6 +79,9 @@ export function createFileCredentialStore(homeDir: string): CredentialStore {
             'Set DSH_HOME (or the plugin\'s homeDir) to a location outside any repository.',
         )
       }
+    },
+    async save(profile, identity) {
+      await this.assertWritable(profile)
       await mkdir(dir, { recursive: true, mode: 0o700 })
       const path = pathFor(profile)
       // Temp file + rename: writeFile truncates in place, so a crash mid-write

@@ -69,6 +69,19 @@ describe('file credential store', () => {
     await expect(store.load('web')).rejects.toBeInstanceOf(SyntaxError)
   })
 
+  it('assertWritable rejects the same way save does, without writing anything', async () => {
+    mkdirSync(join(home, '.git'))
+    const store = createFileCredentialStore(home)
+    await expect(store.assertWritable('web')).rejects.toBeInstanceOf(UnsafeStoreLocationError)
+    const { existsSync } = await import('node:fs')
+    expect(existsSync(join(home, 'agentvalet'))).toBe(false)
+  })
+
+  it('assertWritable passes for a safe destination', async () => {
+    const store = createFileCredentialStore(home)
+    await expect(store.assertWritable('web')).resolves.toBeUndefined()
+  })
+
   it('leaves no temp file behind after a successful save', async () => {
     const store = createFileCredentialStore(home)
     await store.save('web', { agentId: 'a', ownerId: 'o', privateKeyPem: 'k' })

@@ -29,6 +29,34 @@ describe('parseConnectArgs', () => {
   it('returns help for --help', () => {
     expect(parseConnectArgs(['--help'])).toEqual({ help: true })
   })
+
+  it('never echoes the value of a mistyped --flag=value argument', () => {
+    const secret = 'bt_SECRET_VALUE_123'
+    let thrown: unknown
+    try {
+      parseConnectArgs([`--tokn=${secret}`])
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).toBeInstanceOf(Error)
+    const message = (thrown as Error).message
+    expect(message).not.toContain(secret)
+    expect(message).toContain('--tokn')
+  })
+
+  it('never echoes a bare positional argument (which IS the token)', () => {
+    const secret = 'bt_SECRET_POSITIONAL'
+    let thrown: unknown
+    try {
+      parseConnectArgs([secret])
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).toBeInstanceOf(Error)
+    const message = (thrown as Error).message
+    expect(message).not.toContain(secret)
+    expect(message).toMatch(/--token/)
+  })
 })
 
 describe('runConnect', () => {

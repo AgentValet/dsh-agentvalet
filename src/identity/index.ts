@@ -69,6 +69,14 @@ export async function createAgentValetService(opts: ServiceOptions): Promise<Age
       // agent's audit history into another's.
       if (identity) throw new Error('This profile is already connected to AgentValet.')
 
+      // Fail before the single-use bootstrap token is spent: bindAgent below
+      // consumes it and creates the agent server-side, so if the destination
+      // can never be saved to, we must find out now, not after the token is
+      // gone. `store.save` performs the same check again — that second check
+      // is the real guarantee, since the destination could change between
+      // this call and the save below — but this one protects the token.
+      await opts.store.assertWritable(opts.profile)
+
       const { publicKeyPem, privateKeyPem } = await generateAgentKeypair()
       const bound = await bindAgent({
         bootstrapToken, publicKeyPem, proxyUrl: opts.proxyUrl,
