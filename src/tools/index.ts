@@ -24,7 +24,12 @@ export interface Config {
   plugin: 'tools'
 }
 
-export async function apply(ctx: Context): Promise<void> {
+/**
+ * `_config` is unused today; it is in the signature so the bundle entry can
+ * forward config through `ctx.plugin(tools, config)` without the parameter
+ * type collapsing to `undefined`.
+ */
+export async function apply(ctx: Context, _config?: Config): Promise<void> {
   for (const tool of buildTools(ctx.agentvalet)) {
     // Retain the disposer so unload removes the registration; Cordis
     // rejects leaked contributions.
