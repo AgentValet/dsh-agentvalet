@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mkdtempSync, statSync } from 'node:fs'
+import { chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFileCredentialStore } from '../../src/identity/store.js'
@@ -25,6 +26,18 @@ describe('file credential store', () => {
     const store = createFileCredentialStore(home)
     await store.save('web', { agentId: 'a', ownerId: 'o', privateKeyPem: 'k' })
     const mode = statSync(join(home, 'agentvalet', 'web.json')).mode & 0o777
+    if (process.platform !== 'win32') expect(mode).toBe(0o600)
+  })
+
+  it('restores owner-only mode on re-bind (overwrite)', async () => {
+    const store = createFileCredentialStore(home)
+    const filePath = join(home, 'agentvalet', 'web.json')
+    await store.save('web', { agentId: 'a', ownerId: 'o', privateKeyPem: 'k' })
+    // Deliberately loosen permissions to simulate an existing file with wrong mode
+    await chmod(filePath, 0o644)
+    // Re-save (overwrite) and verify mode is restored
+    await store.save('web', { agentId: 'a-new', ownerId: 'o', privateKeyPem: 'k-new' })
+    const mode = statSync(filePath).mode & 0o777
     if (process.platform !== 'win32') expect(mode).toBe(0o600)
   })
 })

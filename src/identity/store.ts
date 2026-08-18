@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export interface StoredIdentity {
@@ -31,7 +31,10 @@ export function createFileCredentialStore(homeDir: string): CredentialStore {
     },
     async save(profile, identity) {
       await mkdir(dir, { recursive: true, mode: 0o700 })
-      await writeFile(pathFor(profile), JSON.stringify(identity), { mode: 0o600 })
+      const path = pathFor(profile)
+      await writeFile(path, JSON.stringify(identity), { mode: 0o600 })
+      // writeFile mode only applies on creation. Force 0o600 on both create and overwrite.
+      await chmod(path, 0o600)
     },
   }
 }
