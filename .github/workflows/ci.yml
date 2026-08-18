@@ -11,3 +11,7 @@ jobs:
       - run: node scripts/no-secrets.mjs
       - run: npm run typecheck
       - run: npm test
+      # tsc here is emit-only; a declaration or emit failure that `typecheck`
+      # (--noEmit against the test project) cannot see would otherwise surface
+      # for the first time at publish.
+      - run: npm run build

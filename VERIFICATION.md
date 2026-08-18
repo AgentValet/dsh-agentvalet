@@ -1,11 +1,11 @@
-# Real-harness verification (Task 7, Step 6)
+# Real-harness verification
 
 Date: 2026-08-18. Bundle version verified: `@agentvalet/dsh@0.1.0`, built from
 `lib/` via `npm run build` immediately before this run.
 
 ## What I could NOT get running, and why
 
-The brief's suggested command was:
+The obvious command to try was:
 
 ```bash
 npx @deepseek-ai/dsh@0.1.0-rc.7 web
@@ -24,16 +24,15 @@ tried. The distinguishing factor is dependency-graph size: `npm pack`ing
 on **~60 first-party `@deepseek-ai/dsh-*` packages** (agent presets, terminal
 tools, web app, MCP client, subagent control, etc.) plus their own
 transitive trees. Full resolution of that graph never completed here. I did
-not fabricate a pass to route around this — I'm recording the failure
-honestly, per the brief's instruction.
+not fabricate a pass to route around this; the failure is recorded as it
+happened.
 
 Given that, I could not verify against the *literal* `dsh web` command. I did
 verify against the **real, unmodified, currently-published** harness
 packages that the failed install would have used, three ways:
 
 1. **Live in-process boot** — the strongest evidence below. I wrote a
-   throwaway script (`scratch-verify.mjs`, deleted before commit, not
-   part of this commit) that constructs a real `@deepseek-ai/cordis`
+   throwaway script (`scratch-verify.mjs`, deleted afterwards, never committed) that constructs a real `@deepseek-ai/cordis`
    `Context`, mounts the real `@deepseek-ai/dsh-tools` `ToolRuntime` and
    `@deepseek-ai/dsh-system-prompt` `SystemPrompt` (both already present as
    this bundle's own `devDependencies`, unmocked, pulled from the registry),
@@ -93,7 +92,7 @@ live successful registration.
 
 **Yes — confirmed live.** `ctx.tools.schemas()` (the real
 `ToolRuntime.schemas(scope?)` method — this is the actual model-facing
-listing API; it is *not* called `listTools`, which was the brief's guess)
+listing API; it is *not* called `listTools`)
 returned exactly:
 
 ```json
@@ -133,15 +132,17 @@ after set, describe(): { configured: true, source: 'file', writable: true }
 Confirmed live: an arbitrary multi-line string round-trips losslessly under
 one reference key.
 
-**Do NOT rewrite the store now** (per Global Constraint), but here is what
-swapping would involve, so a future task can scope it:
+The store is deliberately **not** rewritten to use it. Here is what swapping
+would involve, so it can be scoped later:
 
 - The seam is a **flat mapping of `CredentialRef` (a single POSIX-identifier
   string) to one string value**, not a nested per-profile JSON document. Our
   `StoredIdentity` has three fields (`agentId`, `ownerId`, `privateKeyPem`)
   for potentially many profiles. Two viable shapes: (a) three refs per
-  profile, e.g. `AGENTVALET_<PROFILE>_AGENT_ID` /
-  `AGENTVALET_<PROFILE>_OWNER_ID` / `AGENTVALET_<PROFILE>_PRIVATE_KEY`
+  profile, e.g. `EXAMPLE_AGENTVALET_<PROFILE>_AGENT_ID` /
+  `EXAMPLE_AGENTVALET_<PROFILE>_OWNER_ID` /
+  `EXAMPLE_AGENTVALET_<PROFILE>_PRIVATE_KEY` (hypothetical names, prefixed so
+  no reader mistakes them for config this package actually reads)
   (uppercased, sanitized profile name — profile names are not guaranteed
   POSIX-identifier-safe), or (b) one ref per profile holding a JSON-encoded
   `StoredIdentity` string (values round-trip losslessly per the test above,
@@ -181,15 +182,15 @@ This also matches the real `TextBlock` type in
 `ContentBlockMap['text'] = TextBlock`), so both the compile-time contract
 and the actual rendered value agree.
 
-## Q5 (carried from Task 6 review): does a `validateArgs` failure come back as our `{ok:false,error}` shape, or escape as a framework-level throw?
+## Q5: does a `validateArgs` failure come back as our `{ok:false,error}` shape, or escape as a framework-level throw?
 
-**Answered live, and the answer is neither of the two options as originally
-posed — it's a third, better outcome.** I called
+**Answered live, and it is neither of the two options as posed — it is a
+third, better outcome.** I called
 `ctx.tools.execute({ name: 'agentvalet_read_platform', arguments: { endpoint:
 '/x', scope: 'read' } })` — omitting the required `platform` argument. It did
 **not** throw out of `ctx.tools.execute`, and it did **not** reach our own
 `execute` body (so our `{ok:false,error}` shape from `errors.ts` was never
-invoked — `validateArgs` runs before our code, exactly as the brief said).
+invoked — `validateArgs` runs before our code does).
 The real pipeline returned a normal, well-formed result:
 
 ```json
@@ -206,9 +207,8 @@ a normal `ToolExecutionResult` with `isError: true` and a `content` block the
 model reads like any other tool result. Our own error-mapping layer
 (`toToolFailure`) is irrelevant to this path — it never runs, and doesn't
 need to, because dsh-tools' own message is already actionable ("missing
-required property \"platform\""). This is a materially different (and
-better) answer than the two options the Task 6 review worried about, and it
-was only reachable by driving a real call through the real `ToolRuntime`.
+required property \"platform\""). This was only reachable by driving a real
+call through the real `ToolRuntime`.
 
 ## An incidental finding (not fixed, out of scope for this task)
 
@@ -228,10 +228,10 @@ an instance of `@agentvalet/client`'s `ConfigError`. `toToolFailure` only
 recognizes `@agentvalet/client`'s own error classes, so a plain `Error` falls
 through every `instanceof` check to the generic message — which loses the
 "connect this profile with a bootstrap token" instruction the model actually
-needs. This is a real, live-observed bug, not a documentation gap. I have not
-fixed it — Task 7 is docs and verification only — but it should be filed as
-a follow-up: either `client()` should throw `ConfigError` itself, or
-`toToolFailure` should special-case the not-connected message.
+needs. This was a real, live-observed bug, not a documentation gap.
+
+**Fixed since.** `client()` now throws `ConfigError`, so the actionable connect
+sentence fires; covered by `test/identity/plugin.test.ts`.
 
 ---
 
@@ -247,3 +247,38 @@ a follow-up: either `client()` should throw `ConfigError` itself, or
 
 Both were throwaway verification scripts, not test suite additions; they are
 not part of this commit.
+
+---
+
+## Q6: does dsh load a *dependency package's* root `AGENTS.md`?
+
+**Not established. Treat `AGENTS.md` in this package as unproven.**
+
+`AGENTS.md` is in `package.json`'s `files` and is content-tested, but nothing
+found here shows that dsh reads an installed dependency's root `AGENTS.md`. The
+only `AGENTS.md` reference in the packages installed in this repo is in
+`@deepseek-ai/dsh-session`'s event docs, which describe "subdir AGENTS.md"
+being injected as synthetic context — a *project-tree* convention (project root
+and its subdirectories, or `$DSH_HOME`), not a node_modules scan. The loader
+itself lives in the CLI/app-boot packages, which could not be installed here
+(see the top of this document), so it could not be inspected.
+
+Consequences, stated plainly: the routing instructions in `AGENTS.md` may never
+reach a model. What *does* demonstrably reach the model is each tool's own
+`description` in `src/tools/define.ts`, which is why the "call
+`agentvalet_list_platforms` first, pass platform and scope verbatim" instruction
+is repeated there. `AGENTS.md` ships as a best-effort duplicate of that
+guidance, and as documentation for a human who copies it into their own project
+root. Anyone who can boot the full harness should confirm whether it is loaded
+before treating it as an enforcement surface.
+
+---
+
+## Not verified against a real harness
+
+- The `cordis.patch.yml` install path (`dsh plugin add @agentvalet/dsh`) — the
+  CLI would not install here.
+- Any end-to-end call against the live AgentValet proxy. Every broker outcome
+  in the test suite is exercised through the `@agentvalet/client` error classes,
+  not against production.
+
