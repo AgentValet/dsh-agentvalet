@@ -5,10 +5,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        # fetch-depth: 0 because the secrets guard scans every commit message
+        # reachable from HEAD. The default shallow clone has one commit, so the
+        # scan would pass by seeing almost nothing.
+        with: { fetch-depth: 0 }
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - run: npm ci
       - run: node scripts/no-secrets.mjs
+        # Literals too specific to commit (private repo names, origin hosts)
+        # live in a gitignored .no-secrets-denylist locally. CI has no such
+        # file, so they arrive as a repo secret instead. Unset is fine: the
+        # generic patterns still run.
+        env:
+          NO_SECRETS_DENYLIST: ${{ secrets.NO_SECRETS_DENYLIST }}
       - run: npm run typecheck
       - run: npm test
       # tsc here is emit-only; a declaration or emit failure that `typecheck`
