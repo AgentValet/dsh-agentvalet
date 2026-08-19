@@ -8,7 +8,7 @@ import * as tools from '../../src/tools/index.js'
 import { buildTools } from '../../src/tools/define.js'
 
 const home = () => mkdtempSync(join(tmpdir(), 'avdsh-connect-'))
-const TOKEN = 'bt_supersecret_bootstrap_value'
+const TOKEN = 'bt_supersecret_bootstrap_value' // no-secrets-fixture: synthetic, proves the guard fires
 const okFetch = (async () =>
   new Response(JSON.stringify({ agent_id: 'agt_x', owner_id: 'own_y' }), {
     status: 200,
@@ -45,7 +45,7 @@ describe('parseConnectArgs', () => {
   })
 
   it('never echoes a bare positional argument (which IS the token)', () => {
-    const secret = 'bt_SECRET_POSITIONAL'
+    const secret = 'bt_SECRET_POSITIONAL' // no-secrets-fixture: synthetic, proves the CLI never echoes it
     let thrown: unknown
     try {
       parseConnectArgs([secret])

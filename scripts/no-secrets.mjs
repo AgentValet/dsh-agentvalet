@@ -17,9 +17,18 @@
 //      the shipping files. Catches ANY real secret regardless of format,
 //      including ones no pattern would match.
 //
-// Scans exactly what `npm pack` would ship, so the `files` allowlist and
-// .npmignore are honoured and the guard does not cry wolf over local-only
-// artifacts. A guard that fires on noise gets switched off.
+// Scans BOTH publish surfaces, because this package ships on two:
+//
+//   * the npm tarball — exactly what `npm pack` would ship, so the `files`
+//     allowlist and .npmignore are honoured;
+//   * the public git repo — every tracked file, including `test/` and
+//     `scripts/`, which the tarball excludes and which therefore used to be
+//     completely unguarded on the channel where they actually do ship.
+//
+// A clean tarball says nothing about the repo. Both are scanned, and a hit on
+// either fails the run, with the affected channel named so the fix is obvious.
+// Untracked files are ignored deliberately: a guard that fires on local-only
+// scratch artifacts gets switched off.
 //
 // Secret VALUES are never printed — only the variable name and the file.
 //
@@ -136,6 +145,25 @@ function filesThatWouldShip() {
   return (JSON.parse(out)[0]?.files ?? []).map((f) => f.path);
 }
 
+// Everything git would publish when the repo goes public. `git ls-files` lists
+// tracked paths only, so untracked scratch files are out of scope by design.
+// Outside a git work tree this returns [] rather than throwing — the npm
+// surface is still scanned, and a package with no repo has no repo to leak.
+function trackedFiles() {
+  try {
+    const out = execFileSync("git", ["ls-files", "-z"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      shell: process.platform === "win32",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return out.split("\u0000").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 // ── Layer 2: real values from .env ───────────────────────────────────────────
 function envSecrets() {
   const envPath = join(REPO_ROOT, ".env");
@@ -162,27 +190,58 @@ try {
   process.exit(1);
 }
 
+const tracked = trackedFiles();
+
 const SCAN_EXT = /\.(md|json|js|mjs|cjs|ts|tsx|map|yaml|yml|txt|toml|sh|html|css)$/i;
 const secrets = envSecrets();
 const denied = localDenylist();
 const hits = [];
 
-for (const rel of shipping.filter((f) => SCAN_EXT.test(f))) {
+// One file may ship on both channels; scan it once and report every channel it
+// reaches, so the reader knows whether removing it from `files` is enough.
+// A line ending in this marker is a deliberate test fixture, not a leak.
+const FIXTURE_MARKER = /no-secrets-fixture/;
+let suppressed = 0;
+
+const targets = new Map();
+const addTarget = (rel, channel) => {
+  const key = rel.split("\\").join("/");
+  if (!SCAN_EXT.test(key)) return;
+  const channels = targets.get(key) ?? new Set();
+  channels.add(channel);
+  targets.set(key, channels);
+};
+for (const rel of shipping) addTarget(rel, "npm");
+for (const rel of tracked) addTarget(rel, "git");
+
+for (const [rel, channels] of targets) {
   let text;
   try {
     text = readFileSync(join(ROOT, rel), "utf8");
   } catch {
     continue;
   }
+  const on = [...channels].join("+");
+  // Scanning the repo means scanning this guard's OWN tests, which must contain
+  // secret-shaped strings to prove the patterns fire. A line carrying the marker
+  // below is dropped before matching. It is deliberately narrow — one line, not
+  // a file or a directory — and every use is counted in the summary, so nobody
+  // can quietly silence a real finding with it.
+  const kept = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (FIXTURE_MARKER.test(line)) suppressed++;
+    else kept.push(line);
+  }
+  text = kept.join("\n");
   for (const { re, what } of PATTERNS) {
-    if (re.test(text)) hits.push({ file: rel, what });
+    if (re.test(text)) hits.push({ file: rel, what, on });
   }
   // Never print the value itself — the variable name localises it well enough.
   for (const { name, value } of secrets) {
-    if (text.includes(value)) hits.push({ file: rel, what: `literal value of ${name} from .env` });
+    if (text.includes(value)) hits.push({ file: rel, what: `literal value of ${name} from .env`, on });
   }
   for (const value of denied) {
-    if (text.includes(value)) hits.push({ file: rel, what: "literal from the local denylist" });
+    if (text.includes(value)) hits.push({ file: rel, what: "literal from the local denylist", on });
   }
 }
 
@@ -196,17 +255,23 @@ const pkgName = (() => {
 
 if (hits.length === 0) {
   console.log(
-    `[no-secrets] ok — ${pkgName}: ${shipping.length} shipping files, ` +
+    `[no-secrets] ok — ${pkgName}: ${targets.size} files scanned ` +
+      `(${shipping.length} in the npm tarball, ${tracked.length} tracked by git), ` +
       `${PATTERNS.length} patterns, ${secrets.length} .env values and ` +
-      `${denied.length} denylist literals cross-checked`,
+      `${denied.length} denylist literals cross-checked, ` +
+      `${suppressed} fixture lines skipped`,
   );
   process.exit(0);
 }
 
 console.error(`\n[no-secrets] REFUSING TO PUBLISH ${pkgName}\n`);
-for (const h of hits) console.error(`  ${h.file}  —  ${h.what}`);
+for (const h of hits) console.error(`  [${h.on}] ${h.file}  —  ${h.what}`);
 console.error(
-  "\nSomething sensitive is inside the tarball this publish would upload.\n" +
+  "\nSomething sensitive is on a surface this repo publishes.\n" +
+    "  [npm] is inside the tarball a publish would upload.\n" +
+    "  [git] is a tracked file. It ships when the repo goes public, and it is\n" +
+    "        already in this repo history, so deleting it from the working\n" +
+    "        tree alone does NOT remove it.\n" +
     "Do NOT publish past this. An npm version cannot be unpublished after 72h\n" +
     "and can never be reused afterwards; assume anything uploaded is permanent.\n",
 );

@@ -27,13 +27,13 @@ describe('no-secrets guard', () => {
   }, 30_000)
 
   it('still catches an agent id', () => {
-    const res = scan('Agent ID: `agt_zzzzsyntheticfixture01`\n')
+    const res = scan('Agent ID: `agt_zzzzsyntheticfixture01`\n') // no-secrets-fixture: synthetic, proves the guard fires
     expect(res.code).toBe(1)
     expect(res.out).toMatch(/AgentValet agent id/)
   }, 30_000)
 
   it('still catches an owner id', () => {
-    const res = scan('Owner ID: `00000000-0000-4000-8000-000000000000`\n')
+    const res = scan('Owner ID: `00000000-0000-4000-8000-000000000000`\n') // no-secrets-fixture: synthetic, proves the guard fires
     expect(res.code).toBe(1)
     expect(res.out).toMatch(/owner id/)
   }, 30_000)
@@ -46,7 +46,7 @@ describe('no-secrets guard', () => {
   }, 30_000)
 
   it('still catches a vendor token', () => {
-    const res = scan('export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789\n')
+    const res = scan('export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789\n') // no-secrets-fixture: synthetic, proves the guard fires
     expect(res.code).toBe(1)
     expect(res.out).toMatch(/GitHub token|secret-named variable/)
   }, 30_000)
@@ -66,5 +66,46 @@ describe('no-secrets guard', () => {
     })
     expect(res.code).toBe(1)
     expect(res.out).toMatch(/local denylist/)
+  }, 30_000)
+})
+
+/**
+ * Build a throwaway git repo whose tarball is only `ship.md` but which also
+ * tracks `hidden.md`, then scan it. This is the surface the guard was blind to:
+ * `files` excludes it from npm, but going public publishes it anyway.
+ */
+function scanRepo(shipped: string, tracked: string) {
+  const dir = mkdtempSync(join(tmpdir(), 'no-secrets-repo-'))
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({ name: 'scan-repo-fixture', version: '0.0.0', files: ['ship.md'] }),
+  )
+  writeFileSync(join(dir, 'ship.md'), shipped)
+  writeFileSync(join(dir, 'hidden.md'), tracked)
+  const git = (...args: string[]) =>
+    spawnSync('git', args, { cwd: dir, encoding: 'utf8', shell: process.platform === 'win32' })
+  git('init', '-q')
+  git('add', '.')
+  const res = spawnSync(process.execPath, [GUARD], { cwd: dir, encoding: 'utf8' })
+  return { code: res.status, out: `${res.stdout}${res.stderr}` }
+}
+
+describe('no-secrets guard: the git surface', () => {
+  it('catches a secret in a tracked file the tarball excludes', () => {
+    const res = scanRepo('# clean\n', 'AKIAZZZZZZZZZZZZZZZZ\n')
+    expect(res.code).toBe(1)
+    expect(res.out).toMatch(/hidden\.md/)
+    expect(res.out).toMatch(/\[git\]/)
+  }, 30_000)
+
+  it('still passes when both surfaces are clean', () => {
+    const res = scanRepo('# clean\n', '# also clean\n')
+    expect(res.code).toBe(0)
+  }, 30_000)
+
+  it('skips a line marked as a deliberate fixture, and counts it', () => {
+    const res = scanRepo('# clean\n', 'AKIAZZZZZZZZZZZZZZZZ  <!-- no-secrets-fixture -->\n')
+    expect(res.code).toBe(0)
+    expect(res.out).toMatch(/1 fixture lines skipped/)
   }, 30_000)
 })
