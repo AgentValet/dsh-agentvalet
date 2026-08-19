@@ -48,7 +48,7 @@ beforeAll(async () => {
       }
 
       if (req.url === '/v1/agents/bind') {
-        return json(200, { agent_id: 'agt_e2efake0000000000001', owner_id: randomUUID() })
+        return json(200, { agent_id: 'agt_e2efake0000000000001', owner_id: randomUUID() }) // no-secrets-fixture: synthetic agent id from the fake proxy
       }
       if (req.url === '/v1/agent/permissions') {
         return json(200, { platforms: [{ platformId: 'github', scopes: ['contents.read'] }] })

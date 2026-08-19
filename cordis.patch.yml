@@ -1,9 +1,24 @@
-plugins:
-  - id: av-identity
-    name: '@agentvalet/dsh'
-    config:
-      plugin: identity
-  - id: av-tools
-    name: '@agentvalet/dsh'
-    config:
-      plugin: tools
+# Bundle patch layer for this plugin, applied over the profile's entry list.
+#
+# The file MUST be a top-level YAML array of loader patch entries
+# (`@deepseek-ai/cordis-plugin-include` PatchOptions), NOT a mapping. A mapping
+# is rejected outright by `parsePatchList` in `@deepseek-ai/dsh-app-boot`, so
+# the profile refuses to boot at all -- not just without these plugins.
+#
+# Adding rows is an `insert` list. `id`/`config` at the top level of an entry
+# would instead PATCH an existing row with that id, and a patch matching no row
+# is warned about and skipped -- which fails silently rather than loudly.
+#
+# Both rows mount the same package; the bundle entry dispatches on `plugin` and
+# re-registers each sub-plugin so Cordis sees its real `inject` and defers
+# `av-tools` until `av-identity` has provided the service.
+- insert:
+    - id: av-identity
+      name: '@agentvalet/dsh'
+      config:
+        plugin: identity
+
+    - id: av-tools
+      name: '@agentvalet/dsh'
+      config:
+        plugin: tools
