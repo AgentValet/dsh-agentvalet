@@ -1,8 +1,106 @@
 # Real-harness verification
 
+Bundle verified: `@agentvalet/dsh@0.1.0`, packed with `npm pack` and installed
+from the tarball, so what was tested is what would publish.
+
+## Status: the CLI gate passes (2026-08-19)
+
+The 2026-08-18 run below could not boot the `dsh` CLI and recorded that
+honestly. **That record was wrong about the cause.** The install does not hang.
+Re-run on 2026-08-19 it completed normally:
+
+```
+added 530 packages in 9m
+$ dsh --version
+0.1.0-rc.7
+```
+
+530 packages, 195 of them `@deepseek-ai`. It is slow -- a 61-direct-dependency
+graph, hundreds of metadata round trips at roughly 700ms each -- and the earlier
+run was killed at ~20 minutes while it was still resolving. Slow, not stuck. Any
+future attempt should be given at least 15 minutes before being called dead.
+
+### What the CLI gate then caught
+
+Booting a real profile with this bundle installed failed outright:
+
+```
+dsh: overlay .../@agentvalet/dsh/cordis.patch.yml must be a top-level YAML
+array of loader patch entries
+```
+
+`cordis.patch.yml` was a mapping under a `plugins:` key. `parsePatchList` in
+`@deepseek-ai/dsh-app-boot` rejects anything that is not a top-level array, and
+it throws during composition -- so the user's **entire harness** refuses to
+start, not merely without our plugins. Every unit test passed throughout,
+because nothing in this repo had read that file the way the loader does.
+
+Fixed in `0fba163`: rows are added through an `insert` list, matching
+`@deepseek-ai/dsh-headless`. Note the near-miss -- a bare `id` at the top level
+*patches* an existing row rather than adding one, and a patch matching no row is
+warned about and skipped, so the other plausible wrong shape would have failed
+**silently**. `test/manifest.patch.test.ts` locks both properties down.
+
+This is exactly what the plan's real-harness gate existed to catch, and it is
+the assumption the spec explicitly flagged as unverified in section 5.1.
+
+### Evidence after the fix
+
+Clean profile, tarball installed through the CLI's own command, no
+instrumentation left in place:
+
+```
+$ dsh plugin --profile headless add ./agentvalet-dsh-0.1.0.tgz
+$ dsh --profile headless --dump-config
+  # == @agentvalet/dsh
+  - id: av-identity
+    name: '@agentvalet/dsh'
+    config: { plugin: identity }
+  - id: av-tools
+    name: '@agentvalet/dsh'
+    config: { plugin: tools }
+```
+
+A probe plugin injecting `['agentvalet', 'tools']` and reading the live registry
+during a real boot:
+
+```
+AV-PROBE total=29 av=["agentvalet_list_platforms","agentvalet_read_platform",
+                      "agentvalet_write_platform","agentvalet_delete_platform"]
+AV-PROBE service=object enrolled=false
+```
+
+25 tools before this bundle, 29 after. Booting then proceeds to the model
+credential check (`MISSING_CREDENTIAL: DEEPSEEK_API_KEY`), i.e. everything ahead
+of the LLM mounted cleanly.
+
+One caveat on method, recorded because it nearly became a false finding: a first
+probe reported **zero** `agentvalet_*` tools. It was reading before `av-tools`
+applied -- overlay rows mount ahead of it. Instrumenting the installed copy
+showed the registrations happening, and the delayed read above confirms them.
+A probe that reads the registry too early proves nothing.
+
+### Also added since
+
+`test/harness/e2e.test.ts` drives `ctx.tools.execute(...)` on a real Context and
+`ToolRuntime` while the real `@agentvalet/client` speaks real HTTP to a local
+server: unenrolled fails closed with the connect instruction; enrolment puts the
+public key on the wire and the private key only on disk; a granted read returns;
+`not_granted` becomes an owner-facing instruction; a suspension is named as the
+owner's decision rather than the circuit breaker; an unreachable proxy fails
+closed. Each call carries its own freshly minted assertion.
+
+---
+
+The 2026-08-18 record follows unchanged, except that its "could not get running"
+conclusion is superseded by the section above.
+
+---
+
 Date: 2026-08-18. Bundle version verified: `@agentvalet/dsh@0.1.0`, built from
 `lib/` via `npm run build` immediately before this run.
 
+## What I could NOT get running, and why
 ## What I could NOT get running, and why
 
 The obvious command to try was:
@@ -276,8 +374,9 @@ before treating it as an enforcement surface.
 
 ## Not verified against a real harness
 
-- The `cordis.patch.yml` install path (`dsh plugin add @agentvalet/dsh`) — the
-  CLI would not install here.
+- ~~The `cordis.patch.yml` install path — the CLI would not install here.~~
+  **Closed 2026-08-19** (see the status section at the top): the CLI installed,
+  the install path was broken, and it is now fixed and verified.
 - Any end-to-end call against the live AgentValet proxy. Every broker outcome
   in the test suite is exercised through the `@agentvalet/client` error classes,
   not against production.
