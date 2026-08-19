@@ -83,7 +83,8 @@ function scanRepo(shipped: string, tracked: string) {
   writeFileSync(join(dir, 'ship.md'), shipped)
   writeFileSync(join(dir, 'hidden.md'), tracked)
   const git = (...args: string[]) =>
-    spawnSync('git', args, { cwd: dir, encoding: 'utf8', shell: process.platform === 'win32' })
+    // No shell: cmd.exe would split an unquoted commit message on spaces.
+    spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
   git('init', '-q')
   git('add', '.')
   const res = spawnSync(process.execPath, [GUARD], { cwd: dir, encoding: 'utf8' })
@@ -92,7 +93,7 @@ function scanRepo(shipped: string, tracked: string) {
 
 describe('no-secrets guard: the git surface', () => {
   it('catches a secret in a tracked file the tarball excludes', () => {
-    const res = scanRepo('# clean\n', 'AKIAZZZZZZZZZZZZZZZZ\n')
+    const res = scanRepo('# clean\n', 'AKIAZZZZZZZZZZZZZZZZ\n') // no-secrets-fixture: synthetic AWS-shaped key
     expect(res.code).toBe(1)
     expect(res.out).toMatch(/hidden\.md/)
     expect(res.out).toMatch(/\[git\]/)
@@ -107,5 +108,37 @@ describe('no-secrets guard: the git surface', () => {
     const res = scanRepo('# clean\n', 'AKIAZZZZZZZZZZZZZZZZ  <!-- no-secrets-fixture -->\n')
     expect(res.code).toBe(0)
     expect(res.out).toMatch(/1 fixture lines skipped/)
+  }, 30_000)
+})
+
+/** Same throwaway repo, but committed, so `git log` has a message to scan. */
+function scanCommitted(message: string) {
+  const dir = mkdtempSync(join(tmpdir(), 'no-secrets-msg-'))
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({ name: 'scan-msg-fixture', version: '0.0.0', files: ['ship.md'] }),
+  )
+  writeFileSync(join(dir, 'ship.md'), '# clean\n')
+  const git = (...args: string[]) =>
+    // No shell: cmd.exe would split an unquoted commit message on spaces.
+    spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+  git('init', '-q')
+  git('config', 'user.email', 'fixture@example.invalid')
+  git('config', 'user.name', 'Fixture')
+  git('add', '.')
+  git('commit', '-q', '-m', message)
+  const res = spawnSync(process.execPath, [GUARD], { cwd: dir, encoding: 'utf8' })
+  return { code: res.status, out: `${res.stdout}${res.stderr}` }
+}
+
+describe('no-secrets guard: commit messages', () => {
+  it('catches a secret quoted in a commit message, with every file clean', () => {
+    const res = scanCommitted('chore: drop AKIAZZZZZZZZZZZZZZZZ from the config') // no-secrets-fixture: synthetic AWS-shaped key
+    expect(res.code).toBe(1)
+    expect(res.out).toMatch(/git commit messages/)
+  }, 30_000)
+
+  it('passes on an ordinary message', () => {
+    expect(scanCommitted('chore: tidy the readme').code).toBe(0)
   }, 30_000)
 })

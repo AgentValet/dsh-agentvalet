@@ -149,6 +149,26 @@ function filesThatWouldShip() {
 // tracked paths only, so untracked scratch files are out of scope by design.
 // Outside a git work tree this returns [] rather than throwing — the npm
 // surface is still scanned, and a package with no repo has no repo to leak.
+// Commit messages publish too. A tracked file can be scrubbed from the working
+// tree while the message that describes the scrub still quotes the thing it
+// removed -- which is exactly what happened here. Returns one blob of every
+// message reachable from HEAD, or "" outside a git work tree.
+function commitMessages() {
+  try {
+    // No shell: cmd.exe eats the %-placeholders in the format string and hands
+    // back empty messages, which would make this whole surface silently pass.
+    // git is a real executable, so it does not need one.
+    return execFileSync("git", ["log", "--format=%B%n%an%n%ae", "HEAD"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch {
+    return "";
+  }
+}
+
 function trackedFiles() {
   try {
     const out = execFileSync("git", ["ls-files", "-z"], {
@@ -242,6 +262,30 @@ for (const [rel, channels] of targets) {
   }
   for (const value of denied) {
     if (text.includes(value)) hits.push({ file: rel, what: "literal from the local denylist", on });
+  }
+}
+
+// ---- third surface: commit messages ------------------------------------------
+{
+  const raw = commitMessages();
+  const kept = [];
+  for (const line of raw.split(/\r?\n/)) {
+    if (FIXTURE_MARKER.test(line)) suppressed++;
+    else kept.push(line);
+  }
+  const text = kept.join("\n");
+  for (const { re, what } of PATTERNS) {
+    if (re.test(text)) hits.push({ file: "git commit messages", what, on: "git" });
+  }
+  for (const { name, value } of secrets) {
+    if (text.includes(value)) {
+      hits.push({ file: "git commit messages", what: `literal value of ${name} from .env`, on: "git" });
+    }
+  }
+  for (const value of denied) {
+    if (text.includes(value)) {
+      hits.push({ file: "git commit messages", what: "literal from the local denylist", on: "git" });
+    }
   }
 }
 
