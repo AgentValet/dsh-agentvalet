@@ -12,6 +12,15 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # tsc here is emit-only; a declaration or emit failure that `typecheck`
+      # (--noEmit against the test project) cannot see would otherwise surface
+      # for the first time at publish.
+      - run: npm run build
+      # The guard runs AFTER build, deliberately. It asks `npm pack` what would
+      # ship, and before build there is no lib/ -- so it scanned 6 files instead
+      # of 24 and reported green on a tarball surface that barely existed.
       - run: node scripts/no-secrets.mjs
         # Literals too specific to commit (private repo names, origin hosts)
         # live in a gitignored .no-secrets-denylist locally. CI has no such
@@ -19,9 +28,3 @@ jobs:
         # generic patterns still run.
         env:
           NO_SECRETS_DENYLIST: ${{ secrets.NO_SECRETS_DENYLIST }}
-      - run: npm run typecheck
-      - run: npm test
-      # tsc here is emit-only; a declaration or emit failure that `typecheck`
-      # (--noEmit against the test project) cannot see would otherwise surface
-      # for the first time at publish.
-      - run: npm run build
