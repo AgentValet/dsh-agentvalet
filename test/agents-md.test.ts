@@ -32,3 +32,27 @@ describe('shipped README.md', () => {
     expect(readme).not.toMatch(/agt_[a-z0-9]{10,}/)
   })
 })
+
+/**
+ * The shipped file is documentation; `src/identity/instructions.ts` is what the
+ * model actually receives. They must not drift into saying different things.
+ */
+describe('shipped AGENTS.md agrees with the block connect writes', () => {
+  it('names the same four tools', async () => {
+    const { ROUTING_BLOCK } = await import('../src/identity/instructions.js')
+    for (const tool of [
+      'agentvalet_list_platforms',
+      'agentvalet_read_platform',
+      'agentvalet_write_platform',
+      'agentvalet_delete_platform',
+    ]) {
+      expect(doc).toContain(tool)
+      expect(ROUTING_BLOCK).toContain(tool)
+    }
+  })
+
+  it('says plainly that this copy is not the one dsh loads', () => {
+    expect(doc).toMatch(/NOT loaded by dsh/i)
+    expect(doc).toMatch(/\$DSH_HOME\/AGENTS\.md/)
+  })
+})

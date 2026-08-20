@@ -350,7 +350,21 @@ not part of this commit.
 
 ## Q6: does dsh load a *dependency package's* root `AGENTS.md`?
 
-**Not established. Treat `AGENTS.md` in this package as unproven.**
+**ANSWERED 2026-08-21: no, it does not.** `@deepseek-ai/dsh-agent-instructions`
+states its own discovery rule: it reads `$DSH_HOME/AGENTS.md` and then, in each
+directory from the project root down to the session cwd, every configured
+candidate. There is no `node_modules` scan, so a dependency's root `AGENTS.md`
+reaches nobody. Spec section 5.3 assumed otherwise.
+
+**Fixed:** `agentvalet-dsh-connect` now writes the routing block into
+`$DSH_HOME/AGENTS.md` at enrolment, fenced by `agentvalet:start`/`end` so
+re-running refreshes it in place and never touches the user's own content
+(`src/identity/instructions.ts`, `test/identity/instructions.test.ts`). The
+shipped `AGENTS.md` stays as human documentation and says so at the top.
+
+The original 2026-08-18 assessment follows.
+
+**Not established at the time. Treated `AGENTS.md` in this package as unproven.**
 
 `AGENTS.md` is in `package.json`'s `files` and is content-tested, but nothing
 found here shows that dsh reads an installed dependency's root `AGENTS.md`. The

@@ -115,3 +115,40 @@ describe('toToolFailure', () => {
     expect(msg).toContain('401')
   })
 })
+
+describe('a denial the owner can actually find', () => {
+  const denial = (reason: string, correlationId?: string) =>
+    new AccessDeniedError(
+      403,
+      JSON.stringify({
+        error: 'Permission denied',
+        reason,
+        ...(correlationId ? { correlation_id: correlationId } : {}),
+      }),
+      'github',
+      'contents.read',
+    )
+
+  it('quotes the correlation id on a missing grant', () => {
+    const msg = toToolFailure(denial('not_granted', 'corr-abc-123'))
+    expect(msg).toMatch(/correlation id corr-abc-123/)
+    expect(msg).toMatch(/has not granted/i)
+  })
+
+  it('quotes the correlation id on a suspension', () => {
+    const msg = toToolFailure(denial('agent_suspended', 'corr-xyz-789'))
+    expect(msg).toMatch(/correlation id corr-xyz-789/)
+    expect(msg).toMatch(/suspended by its owner/i)
+  })
+
+  it('says nothing about a correlation id when the proxy sent none', () => {
+    const msg = toToolFailure(denial('not_granted'))
+    expect(msg).not.toMatch(/correlation/i)
+    expect(msg).toMatch(/has not granted/i)
+  })
+
+  it('still classifies a suspension when the body is not JSON at all', () => {
+    const html = new AccessDeniedError(403, '<html>agent_suspended</html>', 'github', 'x')
+    expect(toToolFailure(html)).toMatch(/suspended by its owner/i)
+  })
+})

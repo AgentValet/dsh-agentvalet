@@ -1,3 +1,15 @@
+<!--
+This file is NOT loaded by dsh from inside node_modules. The instruction loader
+(@deepseek-ai/dsh-agent-instructions) reads $DSH_HOME/AGENTS.md and then each
+directory from the project root down to the session cwd -- it never scans
+installed packages. `agentvalet-dsh-connect` therefore writes this same routing
+block into $DSH_HOME/AGENTS.md at enrolment, between agentvalet:start/end
+fences, leaving anything you have written there untouched.
+
+Keep this copy for humans to read and to paste into a project root. The
+authoritative text lives in src/identity/instructions.ts.
+-->
+
 # AgentValet
 
 Platform access for this agent is brokered by AgentValet. No API keys are
