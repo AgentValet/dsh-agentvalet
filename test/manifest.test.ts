@@ -18,7 +18,10 @@ describe('bundle manifest', () => {
   })
 
   it('ships the connect bin it documents', () => {
-    expect(pkg.bin['agentvalet-dsh-connect']).toBe('./bin/connect.mjs')
+    // No leading "./": npm rewrites that form on publish and warns that it
+    // "cleaned" the name, leaving the registry holding something the repo does
+    // not say. Keep the two identical.
+    expect(pkg.bin['agentvalet-dsh-connect']).toBe('bin/connect.mjs')
     expect(pkg.files).toContain('bin/connect.mjs')
     expect(pkg.files).toContain('LICENSE')
   })
