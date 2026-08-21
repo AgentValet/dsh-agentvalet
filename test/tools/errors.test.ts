@@ -152,3 +152,41 @@ describe('a denial the owner can actually find', () => {
     expect(toToolFailure(html)).toMatch(/suspended by its owner/i)
   })
 })
+
+describe('a policy refusal is not a missing grant', () => {
+  const denied = (reason: string) =>
+    new AccessDeniedError(
+      403,
+      JSON.stringify({ error: 'Permission denied', reason, correlation_id: 'c-1' }),
+      'github',
+      'github:contents.read',
+    )
+
+  it('does not tell the user to grant a scope they already granted', () => {
+    // Verified against production: a GRANTED github:contents.read was refused
+    // with endpoint_scope_mismatch and a policy_id.
+    const msg = toToolFailure(denied('endpoint_scope_mismatch'))
+    expect(msg).toMatch(/scope is granted/i)
+    expect(msg).toMatch(/policy/i)
+    expect(msg).not.toMatch(/has not granted/i)
+  })
+
+  it('treats an explicit policy denial as terminal, not as something to route around', () => {
+    const msg = toToolFailure(denied('denied_by_policy'))
+    expect(msg).toMatch(/policy refused/i)
+    expect(msg).toMatch(/do not look for another route/i)
+  })
+
+  it('names an expired grant as expired rather than never-granted', () => {
+    expect(toToolFailure(denied('grant_expired'))).toMatch(/expired/i)
+  })
+
+  it('still says "not granted" for a genuinely missing grant', () => {
+    expect(toToolFailure(denied('scope_not_granted'))).toMatch(/has not granted/i)
+  })
+
+  it('falls back to the missing-grant wording when the proxy sends no reason', () => {
+    const bare = new AccessDeniedError(403, '{}', 'github', 'x')
+    expect(toToolFailure(bare)).toMatch(/has not granted/i)
+  })
+})

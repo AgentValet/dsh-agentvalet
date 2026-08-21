@@ -9,6 +9,8 @@ import {
  * `{ error, reason, correlation_id, report_hint, access_request_hint }`.
  */
 interface Denial {
+  /** The proxy's machine-readable denial reason, when it sent one. */
+  reason?: string
   suspended: boolean
   correlationId?: string
 }
@@ -17,6 +19,7 @@ function parseDenial(body: string): Denial {
   try {
     const parsed = JSON.parse(body) as { reason?: string; correlation_id?: string }
     return {
+      ...(typeof parsed.reason === 'string' ? { reason: parsed.reason } : {}),
       suspended: parsed.reason === 'agent_suspended',
       ...(typeof parsed.correlation_id === 'string' && parsed.correlation_id
         ? { correlationId: parsed.correlation_id }
@@ -27,6 +30,68 @@ function parseDenial(body: string): Denial {
     // substring check so a shape change degrades rather than mislabelling a
     // suspension as an ordinary missing grant.
     return { suspended: body.includes('agent_suspended') }
+  }
+}
+
+
+/**
+ * Say which of the two very different denials this is.
+ *
+ * A missing grant and a policy refusal both arrive as HTTP 403, and telling the
+ * user "ask the owner to grant it" when the scope is ALREADY granted sends them
+ * to change a setting that is not the cause. Verified against production: a
+ * granted `github:contents.read` was refused with
+ * `reason: "endpoint_scope_mismatch"` and a `policy_id` -- the grant was fine,
+ * a policy blocked the endpoint.
+ */
+function denialSentence(platform: string, scope: string, denial: Denial): string {
+  const head = `AgentValet denied access to ${platform} with scope ${scope}.`
+  const tail = trace(denial.correlationId)
+
+  switch (denial.reason) {
+    // The grant exists; something narrower refused this specific call. Do NOT
+    // send the user to the grants page -- the grant is not what is wrong.
+    case 'endpoint_scope_mismatch':
+      return (
+        `${head} The scope is granted, but it does not authorise this endpoint. ` +
+        'This is an owner-side policy decision, not a missing grant. Do not retry the ' +
+        'same call; tell the user which endpoint was refused so they can widen the ' +
+        'policy at https://app.agentvalet.ai if they intend to allow it.' + tail
+      )
+    case 'denied_by_policy':
+    case 'denied_by_guardrail':
+      return (
+        `${head} An owner-side policy refused this call. Nothing was sent to the ` +
+        'platform. Do not retry it and do not look for another route to the same ' +
+        'result; report the refusal to the user.' + tail
+      )
+    case 'grant_expired':
+      return (
+        `${head} The grant for this platform has expired. Ask the user to renew it at ` +
+        'https://app.agentvalet.ai.' + tail
+      )
+    case 'platform_suspended':
+      return (
+        `${head} The owner has suspended this platform for all agents. Nothing was sent. ` +
+        'Do not retry until they lift it.' + tail
+      )
+    case 'circuit_breaker_open':
+      return (
+        `${head} AgentValet has temporarily stopped calls to this platform after repeated ` +
+        'failures. The call was not made. Report it rather than retrying immediately.' + tail
+      )
+    case 'agent_revoked':
+      return (
+        `${head} This agent's access has been revoked. Nothing was sent to the platform ` +
+        'and retrying will not help. Tell the user.' + tail
+      )
+    case 'scope_not_granted':
+    case 'no_permission_record':
+    default:
+      return (
+        `${head} The owner has not granted this agent that platform and scope. ` +
+        'Ask the user to grant it at https://app.agentvalet.ai, then try again.' + tail
+      )
   }
 }
 
@@ -66,12 +131,7 @@ export function toToolFailure(err: unknown): string {
         trace(denial.correlationId)
       )
     }
-    return (
-      `AgentValet denied access to ${err.platform} with scope ${err.scope}. ` +
-      'The owner has not granted this agent that platform and scope. ' +
-      'Ask the user to grant it at https://app.agentvalet.ai, then try again.' +
-      trace(denial.correlationId)
-    )
+    return denialSentence(err.platform, err.scope, denial)
   }
   if (err instanceof ApprovalDeniedError) {
     return `The owner declined this action. Do not retry it and do not attempt another route to the same result. Tell the user it was declined.`

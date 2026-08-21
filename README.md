@@ -50,6 +50,30 @@ A bootstrap token is single-use. Re-running connect on an already-connected
 profile is refused rather than silently replacing the identity, so one
 agent's audit history can never be laundered into another's.
 
+### The routing instructions it writes
+
+Connecting also writes a short routing block into `$DSH_HOME/AGENTS.md` — the
+rule that platform calls go through AgentValet rather than around it. The block
+sits between `<!-- agentvalet:start -->` and `<!-- agentvalet:end -->` fences:
+anything else in that file is yours and is left untouched, and re-running
+connect refreshes the region in place instead of appending a second copy.
+
+It is written there because that is where dsh reads. The instruction loader
+(`@deepseek-ai/dsh-agent-instructions`) reads `$DSH_HOME/AGENTS.md` and then
+each directory from the project root down to the session cwd — it never scans
+`node_modules`, so the `AGENTS.md` shipped inside this package reaches no
+model. That copy is documentation for you to read or paste into a project root.
+
+Note it follows `$DSH_HOME`, not `--home`: `--home` only relocates where the
+identity is stored, and following it would put the file somewhere nothing reads.
+If the write fails, connect says so and still reports the enrolment — by then
+the single-use token is spent and the agent exists, so failing the whole command
+over a markdown file would strand a real identity.
+
+The block deliberately contains no agent id, owner id, or scope list. This file
+lands in a home directory and gets copied into project roots and pasted into
+issues; identity in it would leak through ordinary use.
+
 ## Tools
 
 | Tool | Method | Notes |
