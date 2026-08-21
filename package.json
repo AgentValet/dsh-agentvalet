@@ -24,7 +24,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "agentvalet-dsh-connect": "./bin/connect.mjs"
+    "agentvalet-dsh-connect": "bin/connect.mjs"
   },
   "files": [
     "lib/**/*.js",
