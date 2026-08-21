@@ -1,6 +1,6 @@
 {
   "name": "@agentvalet/dsh",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Governed platform access for DeepSeek Harness — no credential on the machine",
   "type": "module",
   "license": "MIT",
