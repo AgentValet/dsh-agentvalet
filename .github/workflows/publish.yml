@@ -1,0 +1,102 @@
+# Publishes @agentvalet/dsh to npm via Trusted Publishing (OIDC).
+#
+# No NPM_TOKEN. npm verifies this workflow's short-lived OIDC identity instead,
+# which is what gets past the 2FA wall: a CLI publish demands an OTP, and a
+# trusted-publisher account may have no authenticator entry to give one from.
+#
+# ONE-TIME npm SETUP (npmjs.com -> @agentvalet/dsh -> Settings -> Trusted
+# Publisher -> GitHub Actions):
+#   Organization or user: AgentValet
+#   Repository:           dsh-agentvalet
+#   Workflow filename:    publish.yml
+#   Environment:          (leave BLANK -- this job declares no environment)
+#
+# CHICKEN-AND-EGG on the FIRST publish: that settings page does not exist until
+# the package does. So version 0.1.0 needs one bootstrap publish with a classic
+# *Automation* token (or a granular token with "Bypass 2FA"); a classic Publish
+# token will still demand an OTP. Configure the trusted publisher immediately
+# afterwards and revoke the token -- it is a long-lived credential and this
+# workflow never needs it again.
+#
+# Unlike the monorepo, this repo is PUBLIC, so sigstore provenance attestations
+# do work here and are enabled below.
+#
+# To release: bump the version, commit, then push a tag:
+#   git tag v0.1.1 && git push origin v0.1.1
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Deliberately NO `environment:`. npm's "Environment name" field is left
+    # blank in the trusted-publisher config; if this job declared one, the OIDC
+    # token would carry an environment claim the registry is not expecting and
+    # the publish fails as an anonymous PUT -- surfacing as a 404, not an auth
+    # error, because npm will not confirm a package exists to a caller it
+    # cannot identify. If you ever fill that field in, add a matching
+    # `environment:` here.
+    permissions:
+      contents: read
+      # Required for Trusted Publishing. The only credential involved.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        # The secrets guard scans every commit message reachable from HEAD; a
+        # shallow clone would have it pass by seeing almost nothing.
+        with: { fetch-depth: 0 }
+
+      - uses: actions/setup-node@v4
+        with:
+          # Trusted publishing needs npm >= 11.5.1 and node >= 22.14.0.
+          node-version: "22"
+          # NO registry-url. It makes setup-node write an .npmrc containing
+          # `_authToken=${NODE_AUTH_TOKEN}`; with no token in the environment
+          # that resolves to an EMPTY credential which npm then sends, so it
+          # never attempts the OIDC exchange. registry.npmjs.org is the default
+          # anyway, so omitting it costs nothing.
+
+      # Pinned, not @latest: npm 12 is a fresh major and floating onto it would
+      # change the release path without a commit.
+      - name: Install a trusted-publishing-capable npm
+        run: npm install -g npm@11.19.0 && npm --version
+
+      - run: npm ci
+
+      # A tag can point at any commit, so re-verify here rather than trusting
+      # that main was green when the tag was cut.
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      # The guard runs AFTER build, deliberately: it asks `npm pack` what would
+      # ship, and before build there is no lib/ to find.
+      - name: Secrets guard
+        run: node scripts/no-secrets.mjs
+        env:
+          NO_SECRETS_DENYLIST: ${{ secrets.NO_SECRETS_DENYLIST }}
+
+      - name: Check tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "package.json=$PKG_VERSION  tag=$TAG_VERSION"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag ($TAG_VERSION) != package.json ($PKG_VERSION)"; exit 1
+          fi
+
+      - name: Publish (dry run)
+        if: github.event_name == 'workflow_dispatch'
+        run: npm publish --access public --dry-run
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'push'
+        # --provenance works because this repo is public. --loglevel verbose so
+        # an auth failure shows whether npm attempted the OIDC exchange at all,
+        # rather than just reporting ENEEDAUTH.
+        run: npm publish --access public --provenance --loglevel verbose
